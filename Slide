@@ -1,0 +1,230 @@
+from google.ads.googleads.client import GoogleAdsClient
+import os
+
+# Constants - Replace these with your actual values
+CUSTOMER_ID = "YOUR_CUSTOMER_ID"
+YOUTUBE_VIDEO_ID = "YOUR_YOUTUBE_VIDEO_ID"  # Replace with your video ID
+CAMPAIGN_NAME = "My Drill Rap Promotion"
+AD_GROUP_NAME = "Drill Rap Fans (18-30)"
+BUDGET_AMOUNT = 5000000  # Example: $50 (in micros)
+BID_AMOUNT = 50000  # Example CPV (in micros)
+
+DRILL_RAP_CHANNEL_IDS = [
+    "UCqEuem9h_PUpIi3A6eu0JFQ",  # SHA GZ
+    "UC2HMnUWiitQph86vY2VZO5Q",  # Kay Flock
+]
+
+def get_google_ads_client():
+    """
+    Creates and returns a GoogleAdsClient using credentials from environment variables
+    or a google-ads.yaml file.
+    
+    Returns:
+        GoogleAdsClient: An initialized GoogleAdsClient
+    """
+    # Option 1: Load credentials from environment variables
+    if (os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN") and 
+        os.getenv("GOOGLE_ADS_CLIENT_ID") and 
+        os.getenv("GOOGLE_ADS_CLIENT_SECRET") and 
+        os.getenv("GOOGLE_ADS_REFRESH_TOKEN")):
+        
+        return GoogleAdsClient.load_from_env(version="v16")
+    
+    # Option 2: Load credentials from google-ads.yaml file
+    # The file should be in the home directory or in the current working directory
+    # or specified by GOOGLE_ADS_CONFIGURATION_FILE_PATH environment variable
+    try:
+        return GoogleAdsClient.load_from_storage(version="v16")
+    except Exception as e:
+        print(f"Failed to load client from storage: {e}")
+        
+    # If we get here, both methods failed
+    raise ValueError(
+        "Could not create GoogleAdsClient. Please ensure you have either:\n"
+        "1. Set GOOGLE_ADS_DEVELOPER_TOKEN, GOOGLE_ADS_CLIENT_ID, "
+        "GOOGLE_ADS_CLIENT_SECRET, and GOOGLE_ADS_REFRESH_TOKEN environment "
+        "variables, or\n"
+        "2. Created a google-ads.yaml file with your credentials."
+    )
+
+def create_youtube_ad_campaign(client, customer_id, video_id):
+    campaign_service = client.get_service("CampaignService")
+    campaign_budget_service = client.get_service("CampaignBudgetService")
+    ad_group_service = client.get_service("AdGroupService")
+    ad_group_ad_service = client.get_service("AdGroupAdService")
+    asset_service = client.get_service("AssetService")
+    ad_group_criterion_service = client.get_service("AdGroupCriterionService")
+
+    # 1. Create Campaign Budget
+    budget_operation = client.get_type("CampaignBudgetOperation", version="v16")
+    budget = budget_operation.create
+    budget.name = f"{CAMPAIGN_NAME} Budget - {customer_id}"
+    budget.amount_micros = BUDGET_AMOUNT
+    budget.delivery_method = client.enums.BudgetDeliveryMethodEnum.STANDARD
+    budget_response = campaign_budget_service.mutate_campaign_budgets(
+        customer_id=customer_id, operations=[budget_operation]
+    )
+    budget_resource_name = budget_response.results[0].resource_name
+    print(f"Created campaign budget: '{budget_resource_name}'")
+
+    # 2. Create Campaign
+    campaign_operation = client.get_type("CampaignOperation", version="v16")
+    campaign = campaign_operation.create
+    campaign.name = CAMPAIGN_NAME
+    campaign.campaign_budget = budget_resource_name
+    campaign.advertising_channel_type = (
+        client.enums.AdvertisingChannelTypeEnum.VIDEO
+    )
+    campaign.status = client.enums.CampaignStatusEnum.PAUSED
+    
+    # Video campaign settings
+    video_settings = campaign_operation.create.video_settings
+    video_settings.target_cpa_micros = BID_AMOUNT
+    
+    campaign_response = campaign_service.mutate_campaigns(
+        customer_id=customer_id, operations=[campaign_operation]
+    )
+    campaign_resource_name = campaign_response.results[0].resource_name
+    print(f"Created campaign: '{campaign_resource_name}'")
+
+    # 3. Create Ad Group
+    ad_group_operation = client.get_type("AdGroupOperation", version="v16")
+    ad_group = ad_group_operation.create
+    ad_group.name = AD_GROUP_NAME
+    ad_group.campaign = campaign_resource_name
+    ad_group.status = client.enums.AdGroupStatusEnum.ENABLED
+    ad_group.type_ = client.enums.AdGroupTypeEnum.VIDEO_TRUE_VIEW_IN_STREAM
+    ad_group.cpc_bid_micros = BID_AMOUNT
+    ad_group_response = ad_group_service.mutate_ad_groups(
+        customer_id=customer_id, operations=[ad_group_operation]
+    )
+    ad_group_resource_name = ad_group_response.results[0].resource_name
+    print(f"Created ad group: '{ad_group_resource_name}'")
+
+    # 4. Create YouTube Video Asset
+    asset_operation = client.get_type("AssetOperation", version="v16")
+    youtube_asset = asset_operation.create
+    youtube_asset.youtube_video_asset.youtube_video_id = video_id
+    youtube_asset.type_ = client.enums.AssetTypeEnum.YOUTUBE_VIDEO
+    asset_response = asset_service.mutate_assets(
+        customer_id=customer_id, operations=[asset_operation]
+    )
+    asset_resource_name = asset_response.results[0].resource_name
+    print(f"Created YouTube video asset: '{asset_resource_name}'")
+
+    # 5. Create Video Ad
+    ad_group_ad_operation = client.get_type("AdGroupAdOperation", version="v16")
+    ad_group_ad = ad_group_ad_operation.create
+    ad_group_ad.ad_group = ad_group_resource_name
+    ad_group_ad.ad.final_urls.append(f"http://www.youtube.com/watch?v={video_id}")  # Use the video ID
+    ad_group_ad.ad.name = "My Drill Rap Video Ad"
+    
+    # Configure the video ad
+    video_ad = ad_group_ad.ad.video_ad
+    video_ad.headline = "Check Out This Drill Track"
+    video_ad.description_1 = "New heat from the streets"
+    video_ad.description_2 = "Stream it now"
+    video_ad.video_asset = asset_resource_name
+    video_ad.in_stream = client.get_type("VideoTrueViewInStreamAdInfo", version="v16")
+    video_ad.in_stream.action_button_label = "Watch Now"
+    video_ad.in_stream.action_headline = "Drill Music"
+    
+    ad_group_ad_response = ad_group_ad_service.mutate_ad_group_ads(
+        customer_id=customer_id, operations=[ad_group_ad_operation]
+    )
+    ad_group_ad_resource_name = ad_group_ad_response.results[0].resource_name
+    print(f"Created ad group ad: '{ad_group_ad_resource_name}'")
+
+    # 6. Add YouTube Channel Targeting
+    for channel_id in DRILL_RAP_CHANNEL_IDS:
+        criterion_operation = client.get_type(
+            "AdGroupCriterionOperation", version="v16"
+        )
+        criterion = criterion_operation.create
+        criterion.ad_group = ad_group_resource_name
+        criterion.youtube_channel.channel_id = channel_id
+        criterion.type_ = client.enums.CriterionTypeEnum.YOUTUBE_CHANNEL
+        criterion_response = ad_group_criterion_service.mutate_ad_group_criteria(
+            customer_id=customer_id, operations=[criterion_operation]
+        )
+        print(
+            f"Created YouTube Channel targeting criterion: "
+            f"'{criterion_response.results[0].resource_name}' for channel ID "
+            f"'{channel_id}'"
+        )
+
+    # 7. Add Gender Targeting (Male and Female)
+    for gender in ["MALE", "FEMALE"]:
+        criterion_operation = client.get_type(
+            "AdGroupCriterionOperation", version="v16"
+        )
+        criterion = criterion_operation.create
+        criterion.ad_group = ad_group_resource_name
+        criterion.gender.type_ = client.enums.GenderTypeEnum[gender]
+        criterion.type_ = client.enums.CriterionTypeEnum.GENDER
+        criterion_response = ad_group_criterion_service.mutate_ad_group_criteria(
+            customer_id=customer_id, operations=[criterion_operation]
+        )
+        print(
+            f"Created Gender targeting criterion: "
+            f"'{criterion_response.results[0].resource_name}' for gender '{gender}'"
+        )
+
+    # 8. Add Age Range Targeting (18-24 and 25-34)
+    for age_range in ["AGE_RANGE_18_24", "AGE_RANGE_25_34"]:
+        criterion_operation = client.get_type(
+            "AdGroupCriterionOperation", version="v16"
+        )
+        criterion = criterion_operation.create
+        criterion.ad_group = ad_group_resource_name
+        criterion.age_range.type_ = client.enums.AgeRangeTypeEnum[age_range]
+        criterion.type_ = client.enums.CriterionTypeEnum.AGE_RANGE
+        criterion_response = ad_group_criterion_service.mutate_ad_group_criteria(
+            customer_id=customer_id, operations=[criterion_operation]
+        )
+        print(
+            f"Created Age Range targeting criterion: "
+            f"'{criterion_response.results[0].resource_name}' for age range '{age_range}'"
+        )
+
+    # 9. Add Location Targeting (United States)
+    criterion_operation = client.get_type(
+        "AdGroupCriterionOperation", version="v16"
+    )
+    criterion = criterion_operation.create
+    criterion.ad_group = ad_group_resource_name
+    criterion.location.geo_target_constant = f"geoTargetConstants/2840"  # 2840 is the ID for United States
+    criterion.type_ = client.enums.CriterionTypeEnum.LOCATION
+    criterion_response = ad_group_criterion_service.mutate_ad_group_criteria(
+        customer_id=customer_id, operations=[criterion_operation]
+    )
+    print(
+        f"Created Location targeting criterion: "
+        f"'{criterion_response.results[0].resource_name}' for United States"
+    )
+
+    return (
+        campaign_resource_name,
+        ad_group_resource_name,
+        ad_group_ad_resource_name,
+    )
+
+
+def main():
+    try:
+        client = get_google_ads_client()
+        campaign_rn, ad_group_rn, ad_rn = create_youtube_ad_campaign(
+            client, CUSTOMER_ID, YOUTUBE_VIDEO_ID
+        )
+        print(f"\nCampaign created successfully!")
+        print(f"Campaign Resource Name: {campaign_rn}")
+        print(f"Ad Group Resource Name: {ad_group_rn}")
+        print(f"Ad Resource Name: {ad_rn}")
+        print("\nNOTE: The campaign is set to PAUSED status. To activate it,")
+        print("use the Google Ads interface or create another script to update the status.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+
+if __name__ == "__main__":
+    main()
